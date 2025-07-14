@@ -135,7 +135,7 @@ CLOSE alerta_cursor;
 DEALLOCATE alerta_cursor;
 
 
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------------------
 
 --si quisieramos crear un alerta de prueba para poder probar el funcionamiento del trigger
 
@@ -154,3 +154,58 @@ EXEC msdb.dbo.sp_add_notification
 GO
 
 RAISERROR('Simulación de error de severidad 16 para prueba de alerta n2', 16, 1) WITH LOG;
+
+---------------------------------------------------------------------------------------------
+
+--si quisieramos ver la cantidad de alertas configurados anteriormente
+SELECT 
+    a.name AS alerta,
+    o.name AS operador,
+    n.notification_method
+FROM 
+    msdb.dbo.sysalerts a
+JOIN 
+    msdb.dbo.sysnotifications n ON a.id = n.alert_id
+JOIN 
+    msdb.dbo.sysoperators o ON n.operator_id = o.id
+WHERE 
+    a.name LIKE 'Replica error%';
+
+--resultado
+/*
+ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+|alerta                                               |  operador       |1    |
+ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  
+|Replica error 1105 - Sin espacio en disco	          |  OperadorAdmin	|1    |
+ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  
+|Replica error 35206 - Comunicación fallida	          |  OperadorAdmin	|1    |
+ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  
+|Replica error 35250 - Secundaria desconectada	      |  OperadorAdmin	|1    |
+ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  
+|Replica error 35264 - Cambio de rol	              |  OperadorAdmin	|1    |
+ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  
+|Replica error 35273 - Fallo de sincronización	      |  OperadorAdmin	|1    |
+ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  
+|Replica error 41066 - Estado del grupo inválido      |  OperadorAdmin	|1    |
+ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  
+|Replica error 41131 - No sincronizada	              |  OperadorAdmin	|1    |
+ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  
+|Replica error 976 - Base de datos inaccesible	      |  OperadorAdmin	|1    |
+ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  
+*/
+
+--------------------------------------------------------------------------------
+
+--si quisieramos modificar el operador y que tenga diferentes destinos
+
+EXEC msdb.dbo.sp_update_operator
+    @name = N'OperadorAdmin',
+    @enabled = 1,
+    @email_address = N'mail1@dominio1; mail2@dominio2';
+
+--------------------------------------------------------------------------------
+
+--y si quisieramos eliminar el alerta de prueba
+
+EXEC msdb.dbo.sp_delete_alert @name = N'Alerta de prueba por severidad 16';
+
