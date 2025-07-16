@@ -209,3 +209,166 @@ EXEC msdb.dbo.sp_update_operator
 
 EXEC msdb.dbo.sp_delete_alert @name = N'Alerta de prueba por severidad 16';
 
+
+-------------------------------------------------------------------------------
+
+--Otras alertas configurables, recomendadas para replicas transaccionales
+
+-- ALERTA: Error 14151 - Falla general en agente de replicación
+EXEC msdb.dbo.sp_add_alert
+    @name = N'Replica TX - Error 14151: Agente fallido',
+    @message_id = 14151,
+    @severity = 0,
+    @enabled = 1,
+    @notification_message = N'Falla detectada en un agente de replicación (error 14151)',
+    @include_event_description_in = 1;
+GO
+
+-- ALERTA: Error 14152 - Conexión fallida
+EXEC msdb.dbo.sp_add_alert
+    @name = N'Replica TX - Error 14152: Conexión fallida',
+    @message_id = 14152,
+    @severity = 0,
+    @enabled = 1,
+    @notification_message = N'Error de conexión con distribuidor o suscriptor (error 14152)',
+    @include_event_description_in = 1;
+GO
+
+-- ALERTA: Error 20574 - Suscripción inválida
+EXEC msdb.dbo.sp_add_alert
+    @name = N'Replica TX - Error 20574: Suscripción inválida',
+    @message_id = 20574,
+    @severity = 0,
+    @enabled = 1,
+    @notification_message = N'Suscripción eliminada o inválida (error 20574)',
+    @include_event_description_in = 1;
+GO
+
+-- ALERTA: Error 20557 - Error en sincronización
+EXEC msdb.dbo.sp_add_alert
+    @name = N'Replica TX - Error 20557: Falla de sincronización',
+    @message_id = 20557,
+    @severity = 0,
+    @enabled = 1,
+    @notification_message = N'Error de sincronización entre publicador y suscriptor (error 20557)',
+    @include_event_description_in = 1;
+GO
+
+-- ALERTA: Error 14040 - Agente no se está ejecutando
+EXEC msdb.dbo.sp_add_alert
+    @name = N'Replica TX - Error 14040: Agente detenido',
+    @message_id = 14040,
+    @severity = 0,
+    @enabled = 1,
+    @notification_message = N'El agente de replicación está detenido o no inició (error 14040)',
+    @include_event_description_in = 1;
+GO
+
+-- ALERTA: Error 18854 - Error interno del agente
+EXEC msdb.dbo.sp_add_alert
+    @name = N'Replica TX - Error 18854: Error interno del agente',
+    @message_id = 18854,
+    @severity = 0,
+    @enabled = 1,
+    @notification_message = N'Error interno en el agente de distribución (error 18854)',
+    @include_event_description_in = 1;
+GO
+
+-- ALERTA: Error 21074 - Falla en procedimiento replicado
+EXEC msdb.dbo.sp_add_alert
+    @name = N'Replica TX - Error 21074: Falla en procedimiento replicado',
+    @message_id = 21074,
+    @severity = 0,
+    @enabled = 1,
+    @notification_message = N'Error ejecutando procedimiento replicado en suscriptor (error 21074)',
+    @include_event_description_in = 1;
+GO
+
+--Asociamos nuesto Operador a las alertas
+DECLARE @alertName NVARCHAR(100);
+
+DECLARE alerta_cursor CURSOR FOR
+SELECT name FROM msdb.dbo.sysalerts
+WHERE name LIKE 'Replica TX - Error%';
+
+OPEN alerta_cursor;
+FETCH NEXT FROM alerta_cursor INTO @alertName;
+
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    EXEC msdb.dbo.sp_add_notification
+        @alert_name = @alertName,
+        @operator_name = N'OperadorAdmin',
+        @notification_method = 1;
+
+    FETCH NEXT FROM alerta_cursor INTO @alertName;
+END
+
+CLOSE alerta_cursor;
+DEALLOCATE alerta_cursor;
+
+-------------------------------------------------------------------------------------------------------
+
+--Generar job que revise el estado de las replicas cada 5 minutos
+
+--Creacion del job
+EXEC msdb.dbo.sp_add_job
+    @job_name = N'Monitoreo_Replicacion_TX',
+    @enabled = 1,
+    @description = N'Verifica si hay fallos o latencia crítica en la replicación transaccional';
+
+--Agregamos el paso dentro del job para que verifique su funcionamiento
+EXEC msdb.dbo.sp_add_jobstep
+    @job_name = N'Monitoreo_Replicacion_TX',
+    @step_name = N'VerificarEstadoReplicacion',
+    @subsystem = N'TSQL',
+    @database_name = N'distribution',
+    @command = N'
+IF EXISTS (
+    SELECT 1
+    FROM MSreplication_monitordata
+    WHERE status != 2 OR delivery_latency > 300
+)
+BEGIN
+    DECLARE @cuerpo NVARCHAR(MAX) = '''';
+
+    SELECT @cuerpo = STRING_AGG(CONCAT(
+        ''Publicador: '', publisher_db, 
+        '' | Suscriptor: '', subscriber_db, 
+        '' | Estado: '', 
+            CASE status 
+                WHEN 1 THEN ''Inactivo''
+                WHEN 3 THEN ''Error''
+                ELSE ''Desconocido''
+            END,
+        '' | Latencia: '', ISNULL(CONVERT(varchar, delivery_latency), ''NULL''), '' seg'',
+        '' | Último sync: '', ISNULL(CONVERT(varchar, last_distsync_time, 120), ''NULL'')
+    ), CHAR(13) + CHAR(10))
+    FROM MSreplication_monitordata
+    WHERE status != 2 OR delivery_latency > 300;
+
+    EXEC msdb.dbo.sp_send_dbmail
+        @profile_name = ''Repl Alerts'',
+        @recipients = ''mail@dominio.com.ar; mail@dominio.com; ncorreos@dominio.com'',
+        @subject = ''⚠️ Alerta: Problema en replicación transaccional'',
+        @body = @cuerpo,
+        @body_format = ''TEXT'';
+END;
+';
+
+--agregamos una frecuencia de 5 minutos al job
+EXEC msdb.dbo.sp_add_schedule
+    @schedule_name = N'Cada5minutos',
+    @enabled = 1,
+    @freq_type = 4,  -- este parametro refiete a ser diariamente
+    @freq_interval = 1,
+    @freq_subday_type = 4,  -- definimos minutos
+    @freq_subday_interval = 5, -- definimos 5 minutos
+    @active_start_time = 0;  -- Desde 00:00
+GO
+
+--asociamos la frecuencia al job
+EXEC msdb.dbo.sp_attach_schedule
+    @job_name = N'Monitoreo_Replicacion_TX',
+    @schedule_name = N'Cada5minutos';
+
